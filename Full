@@ -1,0 +1,450 @@
+public class delRecordsObj {
+    @AuraEnabled
+    public static List<sObject> getAllContacts(string objName,string dateFilter, string statusFilter,string caseOrigin){ 
+        system.debug('dateFilter=='+dateFilter);
+        system.debug('statusFilter=='+statusFilter);
+        system.debug('caseOrigin=='+caseOrigin);
+
+        string genQuery;
+        switch on String.valueOf(objName)
+        {
+            when 'case' {  
+                genQuery = 'select Id,ContactEmail,AccountId,CaseNumber,ContactId'+' from '+ objName+ ' where CreatedDate = '+ dateFilter+ ' and Status = '+'\''+ statusFilter + '\''+' and Origin ='+'\''+ caseOrigin + '\'' ;
+                system.debug('genQuery'+genQuery);
+            }
+            when else {
+                genQuery = 'select Id,Name,CloseDate,AccountId'+' from '+ objName +' where CreatedDate = '+ dateFilter+' and StageName = ' +'\''+ statusFilter + '\''+'and LeadSource='+'\''+ caseOrigin + '\'';
+                system.debug('genQuery'+genQuery);
+            }
+        }
+        list<sObject> sobjList =Database.query(genQuery);
+        system.debug('sobjList'+sobjList);
+        return sobjList;
+    }
+    @AuraEnabled
+    public static void deleteRowSelected(sobject cont){
+        system.debug('inside delete');
+        delete  cont;
+    } 
+    @AuraEnabled
+    public static void save(string objName,string ids, string statusFilter){
+        system.debug('ids :'+ids);
+         system.debug('objName :'+objName);
+        List<String> recIDS=(List<string>)JSON.deserialize(ids,List<Id>.Class);
+        system.debug('ExpenseLineIds'+recIDS);
+        system.debug('statusFilter=='+statusFilter);
+        String subject = 'Deleted Record List';
+        String body = 'These are the deleted record list, attach for reference.';
+        String finalstr = 'Id, Name, Status \n'; 
+        String attName = 'Deleted Record List.csv'; 
+        switch on (objName)
+        {
+            when 'case' { 
+                
+                for (case myCase : [SELECT id,CaseNumber,status FROM case Where ID IN: recIDS and Status =:statusFilter])
+                {
+                    system.debug('Case');
+                    string recordString = '"'+myCase.id+'","'+myCase.CaseNumber+'","'+myCase.Status+'"\n';
+                    finalstr = finalstr + recordString;
+                    system.debug('finalstr=='+finalstr);
+                    system.debug('myCase=='+myCase);
+                }
+            }
+            when else {
+                for (opportunity myCase : [SELECT Name FROM opportunity Where ID IN:recIDS and StageName =:statusFilter])
+                {
+                    system.debug('Opps');
+                    string recordString = '"'+myCase.id+'","'+myCase.Name+'","'+myCase.StageName+'"\n';
+                    finalstr = finalstr + recordString;
+                }
+            }
+        }
+        system.debug('finalstr  : '+finalstr);
+        Messaging.SingleEmailMessage email = new Messaging.SingleEmailMessage(); 
+        Messaging.EmailFileAttachment efa = new Messaging.EmailFileAttachment();
+        efa.setFileName(attName);
+        efa.setBody(Blob.valueOf(finalstr));
+        email.setSubject( subject );
+        email.setToAddresses( new String[] {'bindupagad181997@gmail.com'} );
+        email.setPlainTextBody( body );
+        email.setFileAttachments(new Messaging.EmailFileAttachment[] {efa});
+        Messaging.SendEmailResult [] r = 
+            Messaging.sendEmail(new Messaging.SingleEmailMessage[] {email});   
+    }
+    
+    @AuraEnabled
+    public static void deleteRecords(list<Id> ids,string objName){
+        system.debug('ids=='+ids);
+        switch on String.valueOf(objName)
+        {
+            when 'case' {  
+                try {
+                    list<Case> listToDelete = new list<Case>();
+                    System.debug('lstConIds ====> '+ids);
+                    for(Id idCon : ids) {
+                        listToDelete.add(new Case(Id = idCon));
+                    }
+                    if(!listToDelete.isEmpty()) {
+                        delete listToDelete;
+                    }
+                }
+                catch(Exception ex) {
+                    throw new AuraHandledException(ex.getMessage());
+                }
+            }
+            when else {
+                try {
+                    list<Opportunity> listToDelete = new list<Opportunity>();
+                    System.debug('lstConIds ====> '+ids);
+                    for(Id idCon : ids) {
+                        listToDelete.add(new Opportunity(Id = idCon));
+                    }
+                    if(!listToDelete.isEmpty()) {
+                        delete listToDelete;
+                    }
+                }
+                catch(Exception ex) {
+                    throw new AuraHandledException(ex.getMessage());
+                }
+            }
+        }
+    }
+}
+
+<aura:component implements="force:appHostable,flexipage:availableForAllPageTypes,flexipage:availableForRecordHome,force:hasRecordId,forceCommunity:availableForAllPageTypes,force:lightningQuickAction" controller="delRecordsObj" access="global" >
+    <aura:handler name="init" value="{!this}" action="{!c.doInit}"/>
+    <aura:attribute name="data" type="Object"/>
+    <aura:attribute name="columns" type="List"/>
+    <aura:attribute name="objectName" type="string" />
+    <aura:attribute name="dynamicDate" type="string" />
+    <aura:attribute name="dynamicStatus" type="string" />
+    <aura:attribute name="dynamicCaseOrigin" type="string" />
+    <aura:attribute name="EnableButton" type="boolean" default="true"/>
+    <aura:attribute name="EnableButtonPopup" type="boolean" default="true"/>
+    <aura:attribute name="EmailAttachBtn" type="boolean" default="true"/>
+    <aura:attribute name="isModalOpen" type="boolean" default="false"/>
+    <aura:attribute name="selectedRowsCount" type="integer" default="0" />
+    <aura:attribute name="rowSelID" type="list" />
+   
+        <div class="slds-page-header">
+            <div class="slds-grid">
+                <div class="slds-col slds-has-flexi-truncate">
+                    <p class="slds-text-title_caps slds-line-height_reset"><b>Select Object</b></p>
+                    <br></br>
+                    <ui:inputSelect  class="dynamic" aura:id="InputSelectDynamic" change="{!c.onChange}" />
+                    <h1 class="slds-page-header__title slds-m-right_small slds-align-middle slds-truncate"  title="Selected Object:">
+                    </h1>
+                    <p>Selected Object : <ui:outputText class="result" value="{!v.objectName}" /> </p>
+                    <br></br>
+                    <lightning:button label="Next" title="Neutral action" disabled ="{!v.EnableButton}" onclick="{! c.openModel }"/>
+                </div>
+            </div>
+        </div>
+  
+    <aura:if isTrue="{!v.isModalOpen}">
+        <!-- Modal/Popup Box starts here-->
+        <section role="dialog" tabindex="1" aria-labelledby="modal-heading-01" aria-modal="true" aria-describedby="modal-content-id-1" class="slds-modal slds-fade-in-open">
+            <div class="slds-modal__container">
+                <!-- Modal/Popup Box Header Starts here-->
+                <header class="slds-modal__header">
+                    <p><b> Record List</b></p> 
+                    <p><b>{!v.objectName}</b></p>
+                </header>
+                <div class="slds-modal__content slds-p-around_medium" id="modal-content-id-1">
+                    <lightning:spinner variant="brand" size="large" aura:id="Id_spinner" class="slds-hide" />
+                    <p class="title">Relative Date Filter</p>
+                    <ui:inputSelect  class="dynamic" aura:id="DateSelectDynamic" change="{!c.onExchange}" />
+                    <p class="title">Status Filter</p>
+                    <ui:inputSelect  class="dynamic" aura:id="StatusSelectDynamic" change="{!c.onCheck}" />
+                    <p class="title">Origin Filter</p>
+                    <ui:inputSelect  class="dynamic" aura:id="OriginSelectDynamic" change="{!c.onClick}" />
+                    <b>Selected Rows: {!v.selectedRowsCount}</b>
+                    <div style="height:1000">
+                        <lightning:datatable
+                                             columns="{! v.columns }"
+                                             data="{! v.data }"
+                                             keyField="id"
+                                             onrowselection="{! c.handleRowSelected }"
+                                             onrowaction ="{!c.handleRowAction}"/>
+                    </div>
+                </div>
+                <div class="slds-modal__footer">
+                    <!-- <lightning:button variant="neutral" 
+                                      label="Cancel"
+                                      title="Cancel"
+                                      onclick="{!c.cancelModel }"/>-->
+                    
+                    <lightning:button variant="Brand"
+                                      label="Send Email Attachment"
+                                      disabled="{!v.EmailAttachBtn}"
+                                      onclick="{! c.attachmentSelected }"/>
+                    
+                    <lightning:button variant="Destructive"
+                                      label="Delete Records"
+                                      disabled="{!v.EnableButtonPopup}"
+                                      onclick="{! c.deleteSelected }"/>
+                    
+                    <lightning:button variant="neutral" 
+                                      label="Close"
+                                      title="Close"
+                                      onclick="{!c.closeModel }"/>
+                </div>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open"></div>
+    </aura:if>
+</aura:component>
+
+({
+    doInit : function(cmp,event,helper) {
+        var opts = [
+            { "class": "optionClass", label: "Choose", value: "choose", selected: "true" },
+            { "class": "optionClass", label: "Case", value: "case" },
+            { "class": "optionClass", label: "Opportunity", value: "opportunity" }
+        ];
+        cmp.find("InputSelectDynamic").set("v.options", opts);
+    },
+    onChange: function(cmp,event,helper) {
+        var dynamicCmp = cmp.find("InputSelectDynamic").get("v.value");
+        cmp.set("v.objectName",dynamicCmp);
+        if(dynamicCmp != null){
+            cmp.set('v.EnableButton',false);
+        }
+    },
+    openModel: function(cmp, event, helper) {
+        cmp.set('v.isModalOpen', true);
+        var opts = [
+            { "class": "optionClass", label: "Choose", value: "choose",selected: "true" },
+            { "class": "optionClass", label: "This Week", value: "THIS_WEEK" },
+            { "class": "optionClass", label: "Last 7 Days", value: "LAST_N_DAYS:7" },
+            { "class": "optionClass", label: "Last 15 Days", value: "LAST_N_DAYS:15" },
+            { "class": "optionClass", label: "Last Month", value: "Last_Month" },
+            { "class": "optionClass", label: "Last 90 Days", value: "LAST_N_DAYS:90"},
+            { "class": "optionClass", label: "Last Year", value: "LAST_YEAR"}
+        ]; 
+        cmp.find("DateSelectDynamic").set("v.options", opts);
+    },
+    onExchange: function(cmp, event, helper)  {
+        var dynamicCmp = cmp.find("InputSelectDynamic").get("v.value");
+        var dynamicOpt =  cmp.find("DateSelectDynamic").get("v.value");
+        if(dynamicCmp == 'case' && dynamicOpt!=null ){
+            var options1 = [
+                { "class": "optionClass", label: "Choose", value: "choose",selected: "true" },
+                { "class": "optionClass", label: "New", value: "New" },
+                { "class": "optionClass", label: "Working", value: "Working" },
+                { "class": "optionClass", label: "Closed", value: "Closed" }  
+            ];
+            cmp.find("StatusSelectDynamic").set("v.options", options1);
+        }
+        if(dynamicCmp == 'opportunity' && dynamicOpt!=null ){
+            var options2 = [
+                { "class": "optionClass", label: "Choose", value: "choose",selected: "true" },
+                { "class": "optionClass", label: "Prospecting", value: "Prospecting" },
+                { "class": "optionClass", label: "Closed Won", value: "Closed Won" },
+                { "class": "optionClass", label: "Closed Lost", value: "Closed Lost" },
+                { "class": "optionClass", label: "Qualification", value: "Qualification" },
+                { "class": "optionClass", label: "Proposal/Price Quote", value: "Proposal/Price Quote" },
+                { "class": "optionClass", label: "Value Proposition", value: "Value Proposition" },
+                { "class": "optionClass", label: "Negotiation/Review", value: "Negotiation/Review" },
+                { "class": "optionClass", label: "Needs Analysis", value: "Needs Analysis" }
+            ];
+            cmp.find("StatusSelectDynamic").set("v.options", options2);
+        }
+    },
+    onCheck : function(cmp, event, helper){
+        var dynamicCmp = cmp.find("InputSelectDynamic").get("v.value");
+        var dynamicOpt = cmp.find("StatusSelectDynamic").get("v.value");
+        if(dynamicCmp == 'case' && dynamicOpt!=null ){
+            var options1 = [
+                { "class": "optionClass", label: "Choose", value: "choose",selected: "true" },
+                { "class": "optionClass", label: "Phone", value: "Phone" },
+                { "class": "optionClass", label: "Email", value: "Email" },
+                { "class": "optionClass", label: "Web", value: "Web" }  
+            ];
+            cmp.find("OriginSelectDynamic").set("v.options", options1);
+        }
+        if(dynamicCmp == 'opportunity' && dynamicOpt!=null ){
+            var options1 = [
+                { "class": "optionClass", label: "Choose", value: "choose",selected: "true" },
+                { "class": "optionClass", label: "Web", value: "Web" },
+                { "class": "optionClass", label: "Phone Inquiry", value: "Phone Inquiry" },
+                { "class": "optionClass", label: "Partner Referral", value: "Partner Referral" },
+                { "class": "optionClass", label: "Purchased List", value: "Purchased List" },
+                { "class": "optionClass", label: "Other", value: "Other" }
+            ];
+            cmp.find("OriginSelectDynamic").set("v.options", options1);
+        }
+    },
+    onClick : function (cmp, event, helper){
+        var actions = [
+            { label: 'Show details', name: 'show_details' },
+            { label: 'Edit', name: 'edit' },
+            { label: 'Delete', name: 'delete' }
+        ],
+            fetchData = {
+                name : 'company.companyName',
+                author: 'name.findName',
+                published : 'address.state'
+            };
+        var dynamicCmp = cmp.find("InputSelectDynamic").get("v.value");
+        if(dynamicCmp == 'case'){
+            cmp.set('v.columns', [
+                { label: 'Contact Name', fieldName: 'ContactId', type: 'Lookup(Contact)' },
+                { label: 'Case Number', fieldName: 'CaseNumber', type: 'Auto Number' },
+                { label: 'Contact Email', fieldName: 'ContactEmail', type: 'Email' },
+                { label: 'Account Name', fieldName: 'AccountId', type: 'text' },
+                { type: 'action', typeAttributes: { rowActions: actions } }
+            ]);
+        }
+        if(dynamicCmp == 'opportunity'){
+            cmp.set('v.columns', [
+                { label: 'Opportunity Name', fieldName: 'Name', type: 'text' },
+                { label: 'Close Date', fieldName: 'CloseDate', type: 'date' },
+                { label: 'Account Name', fieldName: 'AccountId', type: 'text' },
+                { type: 'action', typeAttributes: { rowActions: actions } }
+            ]);
+        }
+        var dynamicDateVal = cmp.find("DateSelectDynamic").get("v.value");
+        cmp.set("v.dynamicDate",dynamicDateVal);
+        console.log('dynamicDateVal=='+dynamicDateVal);
+        console.log("dynamicDate=="+'v.dynamicDate');
+        var dynStageStatus = cmp.find("StatusSelectDynamic").get("v.value");
+        console.log("Selected=="+dynStageStatus);
+        cmp.set("v.dynamicStatus",dynStageStatus);
+        var dynCaseOrigin =  cmp.find("OriginSelectDynamic").get("v.value");
+        cmp.set("v.dynamicCaseOrigin",dynCaseOrigin);
+        helper.fetchData(cmp, fetchData, 20);
+    },
+    handleRowAction: function (cmp, event, helper) {
+        var action = event.getParam('action');
+        var row = event.getParam('row');
+        switch (action.name) {
+            case 'show_details':
+                helper.show_detailsRecord(cmp, event);
+                break;
+            case 'edit':
+                helper.editRecord(cmp, event);
+                break;
+            case 'delete':
+                helper.deleteRecord(cmp, event);
+                break;
+        }
+    },
+    handleRowSelected: function (cmp, event, helper) {
+        var selectedRows = event.getParam('selectedRows');
+        var SetIds=new Array();
+        for ( var i = 0; i < selectedRows.length; i++ ) {
+            SetIds.push(selectedRows[i].Id);
+        }
+        console.log('SetIds',SetIds);
+        cmp.set('v.rowSelID', SetIds);
+        console.log("ids=="+cmp.get("v.rowSelID"));
+        cmp.set('v.selectedRowsCount', selectedRows.length);
+        if(selectedRows.length>0){
+            cmp.set('v.EmailAttachBtn',false);
+        }
+    },
+    
+    attachmentSelected : function(cmp, event, helper) {
+        if('v.EmailAttachBtn' != null){
+            cmp.set('v.EnableButtonPopup',false);
+        }
+        var action = cmp.get('c.save');
+        var recIDAtt =JSON.stringify(cmp.get("v.rowSelID"));
+        console.log('GetIDS=='+recIDAtt );
+        action.setParams({
+            ids : recIDAtt,
+            objName : cmp.get('v.objectName'),
+            statusFilter :cmp.get('v.dynamicStatus'),
+            caseOrigin : cmp.get('v.dynamicCaseOrigin')
+        });
+        $A.enqueueAction(action);
+    },  
+    
+    deleteSelected : function(cmp, event, helper) {
+        var action = cmp.get('c.deleteRecords');
+        var recID = cmp.get('v.rowSelID');
+        console.log('GetIDS=='+recID );
+        action.setParams({
+            ids : recID,
+            objName : cmp.get('v.objectName'),
+        });
+        action.setCallback(this, $A.getCallback(function (response) {
+            var state = response.getState();
+            if (state === "SUCCESS") {
+                cmp.set('v.data', response.getReturnValue());
+            } else if (state === "ERROR") {
+                var errors = response.getError();
+                console.error(errors);
+            }
+        }));
+        $A.enqueueAction(action);
+        if('v.EnableButtonPopup' != null){
+            cmp.set('v.isModalOpen',true);
+        }
+    },  
+    closeModel :  function(cmp, event, helper) {
+        cmp.set("v.isModalOpen", false);
+        $A.get('e.force:refreshView').fire();
+    },   
+})
+
+({
+fetchData : function(cmp) {
+        var action = cmp.get('c.getAllContacts');
+        action.setParams({
+            objName : cmp.get('v.objectName'),
+            dateFilter : cmp.get('v.dynamicDate'),
+            statusFilter :cmp.get('v.dynamicStatus'),
+            caseOrigin : cmp.get('v.dynamicCaseOrigin')
+        });
+        action.setCallback(this, $A.getCallback(function (response) {
+            var state = response.getState();
+            if (state === "SUCCESS") {
+                cmp.set('v.data', response.getReturnValue());
+            } else if (state === "ERROR") {
+                var errors = response.getError();
+                console.error(errors);
+            }
+        }));
+        $A.enqueueAction(action);
+    },
+ show_detailsRecord : function(cmp, event) {
+        var row = event.getParam('row');
+        var recordId = row.Id;
+        var navEvt = $A.get("event.force:navigateToSObject");
+        navEvt.setParams({
+            "recordId": recordId,
+            "slideDevName": "Details"
+        });
+        navEvt.fire();
+    },
+    deleteRecord : function(cmp, event) {
+        var action = event.getParam('action');
+        var row = event.getParam('row');
+        var action = cmp.get("c.deleteRowSelected");
+        action.setParams({
+            "cont": row
+        });
+        action.setCallback(this, function(response) {
+            var state = response.getState();
+            if (state === "SUCCESS" ) {
+                var rows = cmp.get('v.data');
+                var rowIndex = rows.indexOf(row);
+                rows.splice(rowIndex, 1);
+                cmp.set('v.data', rows);
+            }
+        });    
+        $A.enqueueAction(action);
+    },
+    editRecord : function(cmp, event) {
+        var row = event.getParam('row');
+        var action =event.getParam('action');
+        var recordId = row.Id;
+        var editRecordEvent = $A.get("e.force:editRecord");
+        editRecordEvent.setParams({
+            "recordId": recordId,
+        });
+        editRecordEvent.fire();
+    }
+})
